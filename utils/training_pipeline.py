@@ -16,8 +16,6 @@ from utils.train_utils import eval_loop, train_loop
 
 @dataclass(frozen=True)
 class TrainingResult:
-    """Immutable container for train_and_evaluate results."""
-
     best_epoch: int
     dev_f1: float
     test_f1: float

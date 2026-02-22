@@ -1,13 +1,4 @@
-"""
-- Morphological, word-dependency, part-of-speech and named-entity features
-- Word frequency indicators (Google Books N-grams)
-- Aggregated at document level as counts/percentages
-- Used with Random Forest classifier (200 trees, max_depth=60)
-
-spaCy models:
-- English: en_core_web_sm
-- Spanish: es_core_news_sm
-"""
+"""Document-level linguistic features (POS, dependency, NER, morphology, word frequency)."""
 
 import numpy as np
 import pandas as pd
@@ -24,14 +15,6 @@ FREQ_THRESHOLDS = {
 
 
 class LinguisticFeatures:
-    """
-    Extracts document-level linguistic features for Random Forest classification.
-    - POS tag counts
-    - Dependency label counts
-    - NER label counts
-    - Morphological feature counts
-    - Word frequency statistics (from Google Books N-grams)
-    """
 
     def __init__(self, language: str, resources_dir: Path | str = "resources"):
         self.language = language
@@ -59,7 +42,6 @@ class LinguisticFeatures:
             self.nlp = spacy.load(model_name)
 
     def _load_word_frequencies(self) -> None:
-        """Load word frequency data from Google Books N-grams."""
         freq_path = self.resources_dir / self.language / "word_freq_matrix.tsv.gz"
         
         if not freq_path.exists():
@@ -142,19 +124,6 @@ class LinguisticFeatures:
         texts: list[str],
         feature_names: list[str] | None = None,
     ) -> tuple[np.ndarray, list[str]]:
-        """
-        Extract linguistic features from a list of texts.
-        
-        Args:
-            texts: List of document texts
-            feature_names: Optional list of feature names to use (for consistency
-                           between train/dev/test). If None, discovers features
-                           from the data.
-            
-        Returns:
-            features: numpy array of shape (n_docs, n_features)
-            feature_names: list of feature names
-        """
         print(f"[LingFeatures] Extracting features from {len(texts)} documents...")
         
         all_features: list[dict[str, int]] = []
