@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+# Virtual environments
+venv/
+.venv/
+env/
+# Jupyter
+.ipynb_checkpoints/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+# Ruff / linters
+.ruff_cache/
+.mypy_cache/
+# Data & artifacts (large / generated)
+data/
+logs/
+plots/
+# HuggingFace cache
+.cache/
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+# Resources (large external data, see README for download links)
+resources/
+# Legacy / scratch files
+COMMANDS.md
+
+#EDA
+EDA.ipynb
