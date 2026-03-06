@@ -15,13 +15,16 @@ Hybrid neural-linguistic models for machine-generated text detection that combin
 git clone https://github.com/<your-username>/autextification-replication.git
 cd autextification-replication
 
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+conda create -n replication_study python=3.11 -y
+conda activate replication_study
 
+pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 python -m spacy download es_core_news_sm
 ```
+
+> **Note**: Exact library versions in `requirements.txt` are pinned for reproducibility. Results may vary with different `transformers` or `torch` versions.
 
 ### Data
 
@@ -114,6 +117,24 @@ python scripts/run_experiments.py --experiment multilingual_xglm --variant pred_
 python scripts/run_experiments.py --experiment all --variant all --subtask all --lang all
 ```
 
+### UltraHybrid (Two-Stage Pipeline)
+
+- **`scripts/training_ultrahybrid.py`** — Stage 1 trains a Hybrid+ neural model, Stage 2 feeds its output probabilities together with linguistic features into RF / XGBoost / MLP classifiers.
+
+```bash
+python scripts/training_ultrahybrid.py --subtask subtask_1 --lang en --config baseline
+python scripts/training_ultrahybrid.py --subtask subtask_1 --lang en --config baseline --style
+```
+
+### Features-Only Classifiers
+
+- **`scripts/training_features.py`** — Aggregates token-level features (probabilistic, word frequency, grammar) to document-level, combines with linguistic (and optional style) features, and trains RF / XGBoost / MLP directly (no neural model).
+
+```bash
+python scripts/training_features.py --subtask subtask_1 --lang en --config baseline
+python scripts/training_features.py --subtask subtask_1 --lang en --config baseline --style
+```
+
 ### Linguistic Feature Classifiers
 
 - **`scripts/training_lingrf.py`** — LingRF and LingRF+PredOut models combining linguistic features, style features, and Random Forest with optional SHAP analysis.
@@ -137,10 +158,12 @@ python scripts/training_lingrf.py --subtask subtask_1 --lang en --variant lingrf
 autextification-replication/
 ├── scripts/
 │   ├── training.py              # Single model training
+│   ├── training_ultrahybrid.py  # Two-stage: Hybrid+ → RF / XGB / MLP
+│   ├── training_features.py     # Features-only: aggregated features → RF / XGB / MLP
+│   ├── training_lingrf.py       # LingRF + style features + SHAP
 │   ├── sweeper.py               # Encoder/variant sweep
 │   ├── run_seeds.py             # Multi-seed aggregation
 │   ├── run_experiments.py       # Multilingual experiment pipeline
-│   ├── training_lingrf.py       # LingRF + style features + SHAP
 │   ├── error_analysis.py        # Post-hoc error analysis
 │   ├── plot_shap.py             # SHAP visualizations
 │   ├── extract_style_features.py # Style feature caching
@@ -165,6 +188,7 @@ autextification-replication/
 │   ├── feature_utils.py         # Feature computation orchestration
 │   ├── train_utils.py           # Training / evaluation loops
 │   ├── training_pipeline.py     # Model construction, tokenization, train-evaluate
+│   ├── classifier_utils.py      # Stage-2 classifiers: RF, XGBoost, PyTorch MLP
 │   └── logging_utils.py         # Tee stdout logger
 │
 │

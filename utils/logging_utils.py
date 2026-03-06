@@ -23,6 +23,9 @@ class Tee:
         if not self.file.closed:
             self.file.flush()
 
+    def isatty(self) -> bool:
+        return False
+
     def close(self) -> None:
         sys.stdout = self.stdout
         self.file.close()

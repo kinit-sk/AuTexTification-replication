@@ -162,7 +162,7 @@ def predict_mlp(
     return np.concatenate(out)
 
 
-type ClassifierResults = dict[str, dict[str, float]]
+ClassifierResults = dict[str, dict[str, float]]
 
 
 def run_classifiers(

@@ -1,7 +1,4 @@
-"""
-Optuna hyperparameter tuning for aggregated features (RF / XGBoost / MLP).
-tune_optuna_agg.py
-"""
+"""Optuna hyperparameter tuning for RF / XGBoost / MLP across all NPZ sources."""
 
 import argparse
 import json
@@ -54,6 +51,14 @@ def macro_f1(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(f1_score(y_true, y_pred, average="macro"))
 
 
+SOURCE_DESCRIPTIONS: dict[str, str] = {
+    "agg": "Aggregated token features (prob pooling + linguistic + style) → RF/XGB/MLP",
+    "ultrahybrid": "Hybrid+ neural outputs + linguistic features → RF/XGB/MLP",
+    "lingrf": "Linguistic features (+ optional style) → RF",
+    "lingrf_predout": "Linguistic + LSTM prediction probabilities → RF",
+}
+
+
 @dataclass
 class AggData:
     subtask: str
@@ -68,6 +73,44 @@ class AggData:
     seed: int
     source: str
     npz_path: Path
+    variant: str
+    multilingual: bool
+    feature_names: list[str]
+
+
+KNOWN_STYLE_FEATURES: frozenset[str] = frozenset({
+    "ttr", "root_ttr", "log_ttr", "hapax_ratio", "dis_legomena_ratio",
+    "avg_sentence_length", "sentence_length_std", "sentence_length_cv", "sentence_count",
+    "bigram_repetition", "trigram_repetition",
+    "avg_word_length", "word_length_std", "word_count",
+    "function_word_ratio", "transition_word_ratio", "hedge_word_ratio",
+    "flesch_reading_ease", "flesch_kincaid_grade",
+    "punctuation_ratio", "comma_ratio",
+    "rare_word_burstiness",
+    "exclamation_ratio", "question_ratio", "first_person_ratio", "formal_word_ratio",
+})
+
+
+def _summarize_features(names: list[str]) -> dict[str, int]:
+    groups: dict[str, int] = {}
+    for name in names:
+        low = name.lower()
+        if low.startswith("pred_prob_"):
+            key = "lstm_pred_probs"
+        elif any(low.startswith(p) for p in ("log_probs_", "entropy_", "prob_")):
+            key = "probabilistic"
+        elif "word_freq" in low or "frequency" in low:
+            key = "word_frequency"
+        elif "grammar" in low:
+            key = "grammar"
+        elif any(low.startswith(p) for p in ("pred_", "flm_", "add_")):
+            key = "hybrid_neural"
+        elif low in KNOWN_STYLE_FEATURES:
+            key = "style"
+        else:
+            key = "linguistic"
+        groups[key] = groups.get(key, 0) + 1
+    return dict(sorted(groups.items(), key=lambda kv: -kv[1]))
 
 
 def load_agg_npz(npz_path: Path) -> AggData:
@@ -77,6 +120,9 @@ def load_agg_npz(npz_path: Path) -> AggData:
     n_classes = int(z["n_classes"]) if "n_classes" in z else 2
     seed = int(z["seed"]) if "seed" in z else 10
     source = str(z["source"]) if "source" in z else "agg"
+    variant = str(z["variant"]) if "variant" in z else ""
+    multilingual = bool(int(z["multilingual"])) if "multilingual" in z else False
+    feature_names = list(z["feature_names"]) if "feature_names" in z else []
 
     return AggData(
         subtask=subtask,
@@ -91,12 +137,27 @@ def load_agg_npz(npz_path: Path) -> AggData:
         seed=seed,
         source=source,
         npz_path=npz_path,
+        variant=variant,
+        multilingual=multilingual,
+        feature_names=feature_names,
     )
 
 
+NPZ_PATTERNS: dict[str, str] = {
+    "agg": "*_features_stage2_data.npz",
+    "ultrahybrid": "*_stage2_data.npz",
+    "lingrf": "*_lingrf_stage2_data.npz",
+}
+
+
 def find_all_npz(out_dir: Path, source: str) -> list[Path]:
-    pattern = "*_features_stage2_data.npz" if source == "agg" else "*_stage2_data.npz"
-    return sorted(out_dir.glob(pattern))
+    pattern = NPZ_PATTERNS.get(source, "*_stage2_data.npz")
+    found = sorted(out_dir.glob(pattern))
+    if source == "ultrahybrid":
+        lingrf_set = set(out_dir.glob(NPZ_PATTERNS["lingrf"]))
+        agg_set = set(out_dir.glob(NPZ_PATTERNS["agg"]))
+        found = [p for p in found if p not in lingrf_set and p not in agg_set]
+    return found
 
 
 class MLPClassifier(nn.Module):
@@ -562,7 +623,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=10, help="Global seed.")
     parser.add_argument("--device", type=str, default=None, help="cuda:0 / cpu (default: auto).")
     parser.add_argument("--save_best", action="store_true", help="Save best models.")
-    parser.add_argument("--source", type=str, default="agg", choices=["agg", "ultrahybrid"], help="Which NPZ pattern to load.")
+    parser.add_argument("--source", type=str, default="agg", choices=["agg", "ultrahybrid", "lingrf"], help="Which NPZ pattern to load.")
     args = parser.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -587,23 +648,34 @@ def main() -> None:
         logf.write(f"Trials: {args.trials}\n")
 
     all_rows: list[dict[str, Any]] = []
-    prefix = "best_agg" if args.source == "agg" else "best_ultrahybrid"
+    prefix_map = {"agg": "best_agg", "ultrahybrid": "best_ultrahybrid", "lingrf": "best_lingrf"}
+    prefix = prefix_map.get(args.source, f"best_{args.source}")
 
-    for npz_path in npz_paths:
+    for npz_idx, npz_path in enumerate(npz_paths, 1):
         data = load_agg_npz(npz_path)
+        desc = SOURCE_DESCRIPTIONS.get(data.source, data.source)
+        feat_summary = _summarize_features(data.feature_names)
+        feat_breakdown = ", ".join(f"{k}: {v}" for k, v in feat_summary.items())
+
         print("\n" + "=" * 90)
-        print(f"[DATA] {data.subtask}/{data.lang} | n_classes={data.n_classes} | Xdim={data.train_X.shape[1]}")
-        print(f"       train={data.train_X.shape} dev={data.dev_X.shape} test={data.test_X.shape}")
-        print(f"       file={data.npz_path}")
-        print(f"       source={data.source}")
+        print(f"[{npz_idx}/{len(npz_paths)}] {data.subtask}/{data.lang} | {desc}")
+        print(f"  Source    : {data.source}")
+        if data.variant:
+            print(f"  Variant   : {data.variant}")
+        if data.multilingual:
+            print(f"  Multiling : yes")
+        print(f"  Classes   : {data.n_classes} ({'binary' if data.n_classes == 2 else 'multi-class'})")
+        print(f"  Features  : {data.train_X.shape[1]} total [{feat_breakdown}]")
+        print(f"  Shapes    : train={data.train_X.shape}  dev={data.dev_X.shape}  test={data.test_X.shape}")
+        print(f"  NPZ       : {data.npz_path.name}")
         print("=" * 90)
 
         per_dataset_rows: list[dict[str, Any]] = []
 
         if "rf" in args.models:
-            print("\n[TUNE] RF")
+            print(f"\n[TUNE] RF | {data.subtask}/{data.lang} | {data.source} | {args.trials} trials")
             rf_res = tune_rf(data, trials=args.trials, seed=args.seed)
-            print(f"  best_dev_f1={rf_res['best_dev_f1']:.4f} | test_f1={rf_res['test_f1']:.4f}")
+            print(f"  >>> best_dev_f1={rf_res['best_dev_f1']:.4f} | test_f1={rf_res['test_f1']:.4f}")
             row = {
                 "subtask": data.subtask,
                 "lang": data.lang,
@@ -620,10 +692,10 @@ def main() -> None:
                 print(f"  saved: {[p.name for p in saved]}")
 
         if "xgb" in args.models:
-            print("\n[TUNE] XGB")
+            print(f"\n[TUNE] XGB | {data.subtask}/{data.lang} | {data.source} | {args.trials} trials")
             xgb_res = tune_xgb(data, trials=args.trials, seed=args.seed)
             bi = xgb_res.get("best_iteration", -1)
-            print(f"  best_dev_f1={xgb_res['best_dev_f1']:.4f} | test_f1={xgb_res['test_f1']:.4f} | best_iter={bi}")
+            print(f"  >>> best_dev_f1={xgb_res['best_dev_f1']:.4f} | test_f1={xgb_res['test_f1']:.4f} | best_iter={bi}")
             row = {
                 "subtask": data.subtask,
                 "lang": data.lang,
@@ -641,9 +713,9 @@ def main() -> None:
                 print(f"  saved: {[p.name for p in saved]}")
 
         if "mlp" in args.models:
-            print("\n[TUNE] MLP")
+            print(f"\n[TUNE] MLP | {data.subtask}/{data.lang} | {data.source} | {args.trials} trials")
             mlp_res = tune_mlp(data, trials=args.trials, seed=args.seed, device=device)
-            print(f"  best_dev_f1={mlp_res['best_dev_f1']:.4f} | test_f1={mlp_res['test_f1']:.4f} | best_epoch={mlp_res.get('best_epoch', -1)}")
+            print(f"  >>> best_dev_f1={mlp_res['best_dev_f1']:.4f} | test_f1={mlp_res['test_f1']:.4f} | best_epoch={mlp_res.get('best_epoch', -1)}")
             row = {
                 "subtask": data.subtask,
                 "lang": data.lang,
@@ -667,10 +739,22 @@ def main() -> None:
         all_rows.extend(per_dataset_rows)
 
     json_path, tsv_path = save_results(DATA_OUT_DIR, tag=f"{args.source}_ALL", rows=all_rows)
-    print("\n" + "=" * 90)
-    print(f"[DONE] Combined results saved: {json_path.name}, {tsv_path.name}")
-    print("=" * 90)
-    print(f"Log file: {log_path}")
+
+    print("\n" + "=" * 110)
+    print("FINAL TUNING SUMMARY")
+    print("=" * 110)
+    print(f"{'Subtask':<12} {'Lang':<6} {'Source':<18} {'Model':<6} {'Dev F1':<10} {'Test F1':<10} {'NPZ'}")
+    print("-" * 110)
+    for r in all_rows:
+        npz_name = Path(str(r["npz"])).stem
+        print(
+            f"{r['subtask']:<12} {r['lang']:<6} {r.get('source', ''):<18} "
+            f"{r['model'].upper():<6} {float(r['best_dev_f1']):<10.4f} {float(r['test_f1']):<10.4f} "
+            f"{npz_name}"
+        )
+    print("=" * 110)
+    print(f"Results: {tsv_path.name}")
+    print(f"Log:     {log_path}")
 
 
 if __name__ == "__main__":

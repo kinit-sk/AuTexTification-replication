@@ -33,6 +33,7 @@ from utils.constants import (
     DEVICE,
     LOCAL_DEVICE,
     LOG_DIR,
+    OUT_DIR,
     RESULTS_DIR,
     SHAP_DIR,
 )
@@ -65,6 +66,7 @@ parser.add_argument("--shap-samples", type=int, default=100,
 args = parser.parse_args()
 
 SEED = 10
+NUMPY_SEED = 0
 CODE_SPLIT = False
 USE_FOLD = 0
 
@@ -87,9 +89,12 @@ DATA_DIR = Path(PROJECT_ROOT) / "data" / "data"
 RESOURCES_DIR = Path(PROJECT_ROOT) / "resources"
 FEATURES_DIR = Path(PROJECT_ROOT) / "data" / "features"
 
+TUNING_DIR: Path = OUT_DIR / "tuning"
+
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 SHAP_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+TUNING_DIR.mkdir(parents=True, exist_ok=True)
 
 DO_SHAP = HAS_SHAP and not args.no_shap
 SHAP_SAMPLES = args.shap_samples
@@ -277,7 +282,7 @@ def train_single_config(
     print("=" * 80)
 
     random.seed(SEED)
-    np.random.seed(SEED)
+    np.random.seed(NUMPY_SEED)
     torch.manual_seed(SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(SEED)
@@ -399,8 +404,8 @@ def train_single_config(
         dev_preds = clf.predict(dev_X, dev_pred_probs)
         test_preds = clf.predict(test_X, test_pred_probs)
         
-        # Use full features for SHAP
         train_X = train_X_full
+        dev_X = dev_X_full
         test_X = test_X_full
 
     train_f1 = f1_score(train_Y, train_preds, average="macro")
@@ -444,6 +449,33 @@ def train_single_config(
         feature_names=np.array(feature_names),
     )
     print(f"\n[INFO] Saved predictions to {preds_path}")
+
+    tune_source = (
+        "lingrf_predout"
+        if model_variant in ["lingrf_predout", "lingrf_style_predout"]
+        else "lingrf"
+    )
+    n_classes = 2 if subtask == "subtask_1" else 6
+    tune_npz_name = f"{subtask}_{lang}_{model_variant}_lingrf_stage2_data.npz"
+    tune_npz_path = TUNING_DIR / tune_npz_name
+    np.savez(
+        tune_npz_path,
+        train_X=train_X,
+        dev_X=dev_X,
+        test_X=test_X,
+        train_y=train_Y,
+        dev_y=dev_Y,
+        test_y=test_Y,
+        subtask=subtask,
+        lang=lang,
+        n_classes=n_classes,
+        seed=SEED,
+        source=tune_source,
+        variant=model_variant,
+        multilingual=int(USE_MULTILINGUAL),
+        feature_names=np.array(feature_names),
+    )
+    print(f"[INFO] Saved tuning NPZ: {tune_npz_path}")
 
     n_total_features = len(feature_names)
 
