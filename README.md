@@ -12,9 +12,6 @@ Hybrid neural-linguistic models for machine-generated text detection that combin
 ### Installation
 
 ```bash
-git clone https://github.com/<your-username>/autextification-replication.git
-cd autextification-replication
-
 conda create -n replication_study python=3.11 -y
 conda activate replication_study
 
@@ -149,7 +146,6 @@ python scripts/training_lingrf.py --subtask subtask_1 --lang en --variant lingrf
 - **`scripts/plot_shap.py`** — Generate SHAP bar/beeswarm plots from saved `.npz` files.
 - **`scripts/extract_style_features.py`** — Precompute and cache style-feature matrices.
 - **`scripts/tune_optuna.py`** — Optuna hyperparameter tuning for aggregated-feature classifiers (RF / XGBoost / MLP).
-- **`scripts/compare_features.py`** — Bit-for-bit verification of feature extractor equivalence.
 - **`scripts/data_split_LDA.py`** — LDA-based topic-balanced fold generation.
 
 ## Project Structure
@@ -168,7 +164,6 @@ autextification-replication/
 │   ├── plot_shap.py             # SHAP visualizations
 │   ├── extract_style_features.py # Style feature caching
 │   ├── tune_optuna.py           # Optuna hyperparameter search
-│   ├── compare_features.py      # Feature extractor verification
 │   └── data_split_LDA.py        # LDA-based data splitting
 │
 ├── feature_extraction/
@@ -192,7 +187,6 @@ autextification-replication/
 │   └── logging_utils.py         # Tee stdout logger
 │
 │
-├── EDA.ipynb                    # Exploratory data analysis
 ├── requirements.txt
 └── README.md
 ```
