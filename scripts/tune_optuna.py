@@ -2,9 +2,7 @@
 
 import argparse
 import json
-import os
 import random
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,9 +26,9 @@ from torch.utils.data import TensorDataset, DataLoader
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
+from _bootstrap import configure_project_root
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, PROJECT_ROOT)
+configure_project_root(__file__, remove_shadowing_utils=False)
 
 from utils.constants import LOG_DIR, OUT_DIR
 

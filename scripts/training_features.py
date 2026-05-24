@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import random
 import sys
 from datetime import datetime
@@ -12,8 +11,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, PROJECT_ROOT)
+from _bootstrap import configure_project_root
+
+PROJECT_ROOT: str = str(configure_project_root(__file__, remove_shadowing_utils=False))
 
 from feature_extraction.linguistic_features import LinguisticFeatures
 from feature_extraction.style_features import StyleFeatures

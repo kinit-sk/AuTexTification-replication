@@ -18,8 +18,9 @@ from sklearn.metrics import classification_report, confusion_matrix
 from torch.utils.data import DataLoader, TensorDataset
 from transformers import AutoTokenizer
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.append(str(PROJECT_ROOT))
+from _bootstrap import configure_project_root
+
+PROJECT_ROOT: Path = configure_project_root(__file__, remove_shadowing_utils=False)
 
 from utils.constants import (
     ENCODER_MAP_BASELINE,

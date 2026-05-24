@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import os
-import sys
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, PROJECT_ROOT)
+from _bootstrap import configure_project_root
+
+configure_project_root(__file__, remove_shadowing_utils=False)
 
 import numpy as np
 
