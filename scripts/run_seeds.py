@@ -12,7 +12,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).parent.parent
 TRAINING_SCRIPT = PROJECT_ROOT / "scripts" / "training.py"
 
-DEFAULT_SEEDS = [10, 42, 123]
+DEFAULT_SEEDS = [10, 11, 12]
 
 
 def parse_args():
@@ -45,7 +45,7 @@ def parse_args():
         "--seeds",
         type=str,
         default=",".join(map(str, DEFAULT_SEEDS)),
-        help="Comma-separated seeds, e.g. 10,42,123",
+        help="Comma-separated seeds, e.g. 10,11,12",
     )
     return parser.parse_args()
 

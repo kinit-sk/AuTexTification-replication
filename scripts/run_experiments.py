@@ -8,7 +8,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import argparse
 import csv
 import json
-import random
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -38,6 +37,7 @@ from utils.constants import (
     RESULTS_DIR,
 )
 from utils.data_utils import load_train_dev_test
+from utils.env_fingerprint import log_env_fingerprint, set_determinism
 from utils.logging_utils import Tee
 from utils.training_pipeline import (
     build_model,
@@ -47,6 +47,7 @@ from utils.training_pipeline import (
 )
 
 SEED = 10
+DEFAULT_SEEDS = [10, 11, 12]
 CODE_SPLIT = False
 USE_FOLD = 0
 
@@ -137,11 +138,7 @@ def get_experiment(name: str) -> ExperimentConfig:
 
 
 def set_seeds(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(0)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    set_determinism(seed)
 
 
 def compute_prob_features(
@@ -248,6 +245,7 @@ class ExperimentResult:
     model_variant: str
     subtask: str
     lang: str
+    seed: int
     prob_models: list[str]
     encoder: str
     best_epoch: int
@@ -275,15 +273,16 @@ def run_single_experiment(
     train_idx: np.ndarray | None = None,
     dev_idx: np.ndarray | None = None,
     feature_time_sec: float = 0.0,
+    seed: int = SEED,
 ) -> ExperimentResult | None:
     start_time = datetime.now()
 
     print("\n" + "=" * 80)
-    print(f"EXPERIMENT: {config.name} | variant={model_variant} | {subtask}/{lang}")
+    print(f"EXPERIMENT: {config.name} | variant={model_variant} | {subtask}/{lang} | seed={seed}")
     print(f"Description: {config.description}")
     print("=" * 80)
 
-    set_seeds(SEED)
+    set_seeds(seed)
 
     if train_texts is None or dev_texts is None or test_texts is None:
         from utils.constants import DATA_DIR
@@ -305,7 +304,7 @@ def run_single_experiment(
                 train_dir=train_dir,
                 test_dir=test_dir,
                 subtask=subtask,
-                seed=SEED,
+                seed=seed,
                 code_split=CODE_SPLIT,
                 use_fold=USE_FOLD,
             )
@@ -373,7 +372,7 @@ def run_single_experiment(
         local_device=LOCAL_DEVICE,
     )
 
-    checkpoint_prefix = f"{config.name}_{model_variant}_{subtask}_{lang}"
+    checkpoint_prefix = f"{config.name}_{model_variant}_{subtask}_{lang}_seed{seed}"
 
     result = train_and_evaluate(
         train_loader=train_loader,
@@ -399,6 +398,7 @@ def run_single_experiment(
         model_variant=model_variant,
         subtask=subtask,
         lang=lang,
+        seed=seed,
         prob_models=prob_models,
         encoder=encoder_id,
         best_epoch=result.best_epoch,
@@ -429,6 +429,7 @@ def save_results(results: list[ExperimentResult], output_path: Path) -> None:
         "variant",
         "subtask",
         "lang",
+        "seed",
         "prob_models",
         "encoder",
         "best_epoch",
@@ -448,6 +449,7 @@ def save_results(results: list[ExperimentResult], output_path: Path) -> None:
                 r.model_variant,
                 r.subtask,
                 r.lang,
+                str(r.seed),
                 prob_str,
                 enc_str,
                 str(r.best_epoch),
@@ -470,6 +472,7 @@ def save_results(results: list[ExperimentResult], output_path: Path) -> None:
                     r.model_variant,
                     r.subtask,
                     r.lang,
+                    r.seed,
                     prob_str,
                     enc_str,
                     r.best_epoch,
@@ -494,7 +497,7 @@ def print_comparison_table(results: list[ExperimentResult]) -> None:
     print("=" * 110)
 
     print(
-        f"\n{'Experiment':<22} {'Variant':<14} {'Task':<10} {'Lang':<5} "
+        f"\n{'Experiment':<22} {'Variant':<14} {'Task':<10} {'Lang':<5} {'Seed':<6} "
         f"{'Encoder':<20} {'Dev F1':<10} {'Test F1':<10}"
     )
     print("-" * 110)
@@ -502,9 +505,64 @@ def print_comparison_table(results: list[ExperimentResult]) -> None:
     for r in results:
         enc_short = r.encoder.split("/")[-1][:18]
         print(
-            f"{r.experiment_name:<22} {r.model_variant:<14} {r.subtask:<10} {r.lang:<5} "
+            f"{r.experiment_name:<22} {r.model_variant:<14} {r.subtask:<10} {r.lang:<5} {r.seed:<6} "
             f"{enc_short:<20} {r.dev_f1:<10.4f} {r.test_f1:<10.4f}"
         )
+
+
+def print_seed_aggregation(results: list[ExperimentResult]) -> None:
+    """Print mean±std across seeds per (experiment, variant, subtask, lang)."""
+    from collections import defaultdict
+
+    grouped: dict[tuple[str, str, str, str], list[ExperimentResult]] = defaultdict(list)
+    for r in results:
+        grouped[(r.experiment_name, r.model_variant, r.subtask, r.lang)].append(r)
+
+    print("\n" + "=" * 110)
+    print("SEED AGGREGATION (mean ± std)")
+    print("=" * 110)
+    print(
+        f"\n{'Experiment':<22} {'Variant':<14} {'Task':<10} {'Lang':<5} "
+        f"{'Dev F1':<18} {'Test F1':<18} {'N'}"
+    )
+    print("-" * 110)
+
+    for (exp, variant, subtask, lang), runs in sorted(grouped.items()):
+        dev_scores = [r.dev_f1 for r in runs]
+        test_scores = [r.test_f1 for r in runs]
+        dev_mean, dev_std = np.mean(dev_scores), np.std(dev_scores)
+        test_mean, test_std = np.mean(test_scores), np.std(test_scores)
+        print(
+            f"{exp:<22} {variant:<14} {subtask:<10} {lang:<5} "
+            f"{dev_mean:.4f}±{dev_std:.4f}   {test_mean:.4f}±{test_std:.4f}   {len(runs)}"
+        )
+
+
+def save_seed_aggregation(results: list[ExperimentResult], output_path: Path) -> None:
+    """Write mean±std across seeds per (experiment, variant, subtask, lang) to TSV."""
+    from collections import defaultdict
+
+    grouped: dict[tuple[str, str, str, str], list[ExperimentResult]] = defaultdict(list)
+    for r in results:
+        grouped[(r.experiment_name, r.model_variant, r.subtask, r.lang)].append(r)
+
+    EXP_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        f.write(
+            "experiment\tvariant\tsubtask\tlang\tdev_mean\tdev_std\ttest_mean\ttest_std\t"
+            "n_seeds\tseeds\n"
+        )
+        for (exp, variant, subtask, lang), runs in sorted(grouped.items()):
+            dev_scores = [r.dev_f1 for r in runs]
+            test_scores = [r.test_f1 for r in runs]
+            seeds_str = ",".join(str(r.seed) for r in sorted(runs, key=lambda x: x.seed))
+            f.write(
+                f"{exp}\t{variant}\t{subtask}\t{lang}\t"
+                f"{np.mean(dev_scores):.6f}\t{np.std(dev_scores):.6f}\t"
+                f"{np.mean(test_scores):.6f}\t{np.std(test_scores):.6f}\t"
+                f"{len(runs)}\t{seeds_str}\n"
+            )
+    print(f"[SAVED] {output_path}")
 
 
 def main() -> None:
@@ -538,9 +596,16 @@ Configurations:
     )
     parser.add_argument("--lang", type=str, choices=["en", "es", "all"], default="en")
     parser.add_argument("--batch-size", type=int, default=PROB_FEATURE_BATCH_SIZE)
+    parser.add_argument(
+        "--seeds",
+        type=str,
+        default=",".join(map(str, DEFAULT_SEEDS)),
+        help="Comma-separated seeds, e.g. 10,11,12. Each seed re-splits train/dev and retrains.",
+    )
 
     args = parser.parse_args()
     batch_size = args.batch_size
+    seeds = [int(s) for s in args.seeds.split(",")]
 
     EXP_OUT_DIR.mkdir(parents=True, exist_ok=True)
     EXP_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -557,6 +622,7 @@ Configurations:
     print(f"Device: {DEVICE}")
     print(f"Arguments: {vars(args)}")
     print("=" * 80)
+    log_env_fingerprint()
 
     config_names = (
         get_all_experiment_names()
@@ -569,8 +635,9 @@ Configurations:
     subtasks = ["subtask_1", "subtask_2"] if args.subtask == "all" else [args.subtask]
     languages = ["en", "es"] if args.lang == "all" else [args.lang]
 
-    total_runs = len(configs) * len(variants) * len(subtasks) * len(languages)
+    total_runs = len(seeds) * len(configs) * len(variants) * len(subtasks) * len(languages)
     print(f"\nPlanned runs: {total_runs}")
+    print(f"  Seeds: {seeds}")
     print(f"  Configs: {[c.name for c in configs]}")
     print(f"  Variants: {variants}")
     print(f"  Subtasks: {subtasks}")
@@ -581,92 +648,97 @@ Configurations:
 
     from utils.constants import DATA_DIR
 
-    for config in configs:
-        for subtask in subtasks:
-            for lang in languages:
-                print(f"\n{'#' * 80}")
-                print(f"# CONFIG GROUP: {config.name} | {subtask}/{lang}")
-                print(f"# {config.description}")
-                print(f"{'#' * 80}")
-
-                train_dir = DATA_DIR / "train" / subtask / lang
-                test_dir = DATA_DIR / "test" / subtask / lang
-
-                try:
-                    (
-                        train_texts,
-                        dev_texts,
-                        test_texts,
-                        train_Y,
-                        dev_Y,
-                        test_Y,
-                        train_idx,
-                        dev_idx,
-                    ) = load_train_dev_test(
-                        train_dir=train_dir,
-                        test_dir=test_dir,
-                        subtask=subtask,
-                        seed=SEED,
-                        code_split=CODE_SPLIT,
-                        use_fold=USE_FOLD,
-                    )
-                except FileNotFoundError as e:
-                    print(f"[SKIP] Data not found: {e}")
-                    continue
-
-                print(
-                    f"[DATA] Train: {len(train_texts)}, Dev: {len(dev_texts)}, Test: {len(test_texts)}"
-                )
-
-                prob_models = config.get_prob_models(lang)
-                model_ids = [spec.model_id for spec in prob_models]
-
-                print(f"\n[FEATURES] Computing shared probabilistic features: {model_ids}")
-                feature_start_time = datetime.now()
-                train_prob, dev_prob, test_prob = compute_prob_features(
-                    train_texts, dev_texts, test_texts, model_ids, batch_size
-                )
-                feature_time_sec = (datetime.now() - feature_start_time).total_seconds()
-                print(
-                    f"\n[FEATURES] Probabilistic feature computation took {feature_time_sec:.1f}s"
-                )
-
-                for variant in variants:
-                    run_idx += 1
+    for seed in seeds:
+        for config in configs:
+            for subtask in subtasks:
+                for lang in languages:
                     print(f"\n{'#' * 80}")
-                    print(f"# RUN {run_idx}/{total_runs}")
-                    print(f"# {config.name} | {variant} | {subtask}/{lang}")
+                    print(f"# CONFIG GROUP: {config.name} | {subtask}/{lang} | seed={seed}")
+                    print(f"# {config.description}")
                     print(f"{'#' * 80}")
 
-                    result = run_single_experiment(
-                        config,
-                        variant,
-                        subtask,
-                        lang,
-                        train_prob=train_prob,
-                        dev_prob=dev_prob,
-                        test_prob=test_prob,
-                        train_texts=train_texts,
-                        dev_texts=dev_texts,
-                        test_texts=test_texts,
-                        train_Y=train_Y,
-                        dev_Y=dev_Y,
-                        test_Y=test_Y,
-                        train_idx=train_idx,
-                        dev_idx=dev_idx,
-                        feature_time_sec=feature_time_sec,
+                    train_dir = DATA_DIR / "train" / subtask / lang
+                    test_dir = DATA_DIR / "test" / subtask / lang
+
+                    try:
+                        (
+                            train_texts,
+                            dev_texts,
+                            test_texts,
+                            train_Y,
+                            dev_Y,
+                            test_Y,
+                            train_idx,
+                            dev_idx,
+                        ) = load_train_dev_test(
+                            train_dir=train_dir,
+                            test_dir=test_dir,
+                            subtask=subtask,
+                            seed=seed,
+                            code_split=CODE_SPLIT,
+                            use_fold=USE_FOLD,
+                        )
+                    except FileNotFoundError as e:
+                        print(f"[SKIP] Data not found: {e}")
+                        continue
+
+                    print(
+                        f"[DATA] Train: {len(train_texts)}, Dev: {len(dev_texts)}, Test: {len(test_texts)}"
                     )
 
-                    if result:
-                        results.append(result)
-                        save_results(
-                            results, EXP_OUT_DIR / f"results_{timestamp}_partial"
+                    prob_models = config.get_prob_models(lang)
+                    model_ids = [spec.model_id for spec in prob_models]
+
+                    print(f"\n[FEATURES] Computing shared probabilistic features: {model_ids}")
+                    feature_start_time = datetime.now()
+                    train_prob, dev_prob, test_prob = compute_prob_features(
+                        train_texts, dev_texts, test_texts, model_ids, batch_size
+                    )
+                    feature_time_sec = (datetime.now() - feature_start_time).total_seconds()
+                    print(
+                        f"\n[FEATURES] Probabilistic feature computation took {feature_time_sec:.1f}s"
+                    )
+
+                    for variant in variants:
+                        run_idx += 1
+                        print(f"\n{'#' * 80}")
+                        print(f"# RUN {run_idx}/{total_runs}")
+                        print(f"# {config.name} | {variant} | {subtask}/{lang} | seed={seed}")
+                        print(f"{'#' * 80}")
+
+                        result = run_single_experiment(
+                            config,
+                            variant,
+                            subtask,
+                            lang,
+                            train_prob=train_prob,
+                            dev_prob=dev_prob,
+                            test_prob=test_prob,
+                            train_texts=train_texts,
+                            dev_texts=dev_texts,
+                            test_texts=test_texts,
+                            train_Y=train_Y,
+                            dev_Y=dev_Y,
+                            test_Y=test_Y,
+                            train_idx=train_idx,
+                            dev_idx=dev_idx,
+                            feature_time_sec=feature_time_sec,
+                            seed=seed,
                         )
+
+                        if result:
+                            results.append(result)
+                            save_results(
+                                results, EXP_OUT_DIR / f"results_{timestamp}_partial"
+                            )
 
     if results:
         print_comparison_table(results)
+        print_seed_aggregation(results)
         save_results(results, EXP_OUT_DIR / f"results_{timestamp}")
         save_results(results, EXP_OUT_DIR / "results_latest")
+        save_seed_aggregation(results, EXP_OUT_DIR / f"experiments_seeds_summary_{timestamp}.tsv")
+        save_seed_aggregation(results, EXP_OUT_DIR / "experiments_seeds_summary_latest.tsv")
 
     print("\n" + "=" * 80)
     print("EXPERIMENT PIPELINE COMPLETE")

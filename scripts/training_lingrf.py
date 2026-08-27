@@ -6,7 +6,6 @@ import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import argparse
-import random
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +38,7 @@ from utils.constants import (
     SHAP_DIR,
 )
 from utils.data_utils import load_train_dev_test
+from utils.env_fingerprint import log_env_fingerprint, set_determinism
 from utils.logging_utils import Tee
 
 try:
@@ -64,9 +64,11 @@ parser.add_argument("--no-shap", action="store_true",
                     help="Skip SHAP analysis")
 parser.add_argument("--shap-samples", type=int, default=100,
                     help="Number of samples for SHAP analysis (default: 100)")
+parser.add_argument("--seed", type=int, default=10,
+                    help="Seed for RF/LSTM init and data split (default: 10)")
 args = parser.parse_args()
 
-SEED = 10
+SEED = args.seed
 NUMPY_SEED = 0
 CODE_SPLIT = False
 USE_FOLD = 0
@@ -260,8 +262,8 @@ def run_shap_analysis(
     explainer = shap.TreeExplainer(clf.model)
     shap_values = explainer.shap_values(X_test_sample)
     
-    prefix = f"{subtask}_{lang}_{variant}"
-    
+    prefix = f"{subtask}_{lang}_{variant}_seed{SEED}"
+
     # Save SHAP values (plots generated separately via plot_shap.py)
     np.savez_compressed(
         SHAP_DIR / f"{prefix}_shap_values.npz",
@@ -279,14 +281,10 @@ def train_single_config(
     model_variant: str,
 ) -> dict | None:
     print("\n" + "=" * 80)
-    print(f"Training {model_variant.upper()} | subtask={subtask} | lang={lang}")
+    print(f"Training {model_variant.upper()} | subtask={subtask} | lang={lang} | seed={SEED}")
     print("=" * 80)
 
-    random.seed(SEED)
-    np.random.seed(NUMPY_SEED)
-    torch.manual_seed(SEED)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(SEED)
+    set_determinism(SEED, numpy_seed=NUMPY_SEED)
 
     train_dir = DATA_DIR / "train" / subtask / lang
     test_dir = DATA_DIR / "test" / subtask / lang
@@ -441,7 +439,7 @@ def train_single_config(
     )
 
     # Save predictions
-    preds_path = RESULTS_DIR / f"{subtask}_{lang}_{model_variant}_test_predictions.npz"
+    preds_path = RESULTS_DIR / f"{subtask}_{lang}_{model_variant}_seed{SEED}_test_predictions.npz"
     np.savez(
         preds_path,
         train_preds=train_preds,
@@ -457,7 +455,7 @@ def train_single_config(
         else "lingrf"
     )
     n_classes = 2 if subtask == "subtask_1" else 6
-    tune_npz_name = f"{subtask}_{lang}_{model_variant}_lingrf_stage2_data.npz"
+    tune_npz_name = f"{subtask}_{lang}_{model_variant}_seed{SEED}_lingrf_stage2_data.npz"
     tune_npz_path = TUNING_DIR / tune_npz_name
     np.savez(
         tune_npz_path,
@@ -484,6 +482,7 @@ def train_single_config(
         "subtask": subtask,
         "lang": lang,
         "variant": model_variant,
+        "seed": SEED,
         "train_f1": train_f1,
         "dev_f1": dev_f1,
         "test_f1": test_f1,
@@ -498,9 +497,9 @@ def train_single_config(
 
 def save_results_tsv(results: list[dict], output_path: Path) -> None:
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write("subtask\tlang\tvariant\ttrain_f1\tdev_f1\ttest_f1\tn_ling\tn_style\tn_total\n")
+        f.write("subtask\tlang\tvariant\tseed\ttrain_f1\tdev_f1\ttest_f1\tn_ling\tn_style\tn_total\n")
         for r in results:
-            f.write(f"{r['subtask']}\t{r['lang']}\t{r['variant']}\t"
+            f.write(f"{r['subtask']}\t{r['lang']}\t{r['variant']}\t{r['seed']}\t"
                     f"{r['train_f1']:.4f}\t{r['dev_f1']:.4f}\t{r['test_f1']:.4f}\t"
                     f"{r['n_ling_features']}\t{r['n_style_features']}\t{r['n_total_features']}\n")
     print(f"\n[INFO] Results saved to {output_path}")
@@ -523,7 +522,9 @@ def main() -> None:
         print(f"SHAP samples: {SHAP_SAMPLES}")
     print(f"Device: {DEVICE}")
     print(f"Timestamp: {timestamp}")
+    print(f"Seed: {SEED}")
     print("=" * 80)
+    log_env_fingerprint()
 
     results = []
 
@@ -542,11 +543,11 @@ def main() -> None:
     print("FINAL SUMMARY - TEST SET RESULTS")
     print("=" * 110)
     
-    print(f"\n{'Subtask':<12} {'Lang':<6} {'Variant':<18} {'Train F1':<10} {'Dev F1':<10} {'Test F1':<10} {'Ling':<6} {'Style':<6} {'Total':<6}")
+    print(f"\n{'Subtask':<12} {'Lang':<6} {'Variant':<18} {'Seed':<6} {'Train F1':<10} {'Dev F1':<10} {'Test F1':<10} {'Ling':<6} {'Style':<6} {'Total':<6}")
     print("-" * 110)
 
     for r in results:
-        print(f"{r['subtask']:<12} {r['lang']:<6} {r['variant']:<18} "
+        print(f"{r['subtask']:<12} {r['lang']:<6} {r['variant']:<18} {r['seed']:<6} "
               f"{r['train_f1']:<10.4f} {r['dev_f1']:<10.4f} {r['test_f1']:<10.4f} "
               f"{r['n_ling_features']:<6} {r['n_style_features']:<6} {r['n_total_features']:<6}")
 

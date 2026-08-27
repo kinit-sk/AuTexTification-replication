@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import random
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +27,7 @@ from utils.constants import (
     is_baseline_encoder,
 )
 from utils.data_utils import load_train_dev_test
+from utils.env_fingerprint import log_env_fingerprint, set_determinism
 from utils.feature_utils import compute_all_features
 from utils.logging_utils import Tee
 from utils.training_pipeline import (
@@ -80,14 +80,9 @@ def run_one(
     print(f"timestamp={datetime.now().isoformat(timespec='seconds')}")
     print(f"device={device} | epochs={epochs} | freeze_epochs={freeze_epochs}")
     print("=" * 90)
+    log_env_fingerprint()
 
-    random.seed(seed)
-    np.random.seed(0)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-    print(f"[SEED] random/torch seed={seed} | numpy seed=0 (forced)")
+    set_determinism(seed)
 
     train_dir = data_dir / "train" / subtask / lang
     test_dir = data_dir / "test" / subtask / lang
@@ -201,7 +196,7 @@ def run_one(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--subtask", choices=["subtask_1", "subtask_2", "all"], default="all")
-    parser.add_argument("--seeds", type=int, nargs="+", default=[10])
+    parser.add_argument("--seeds", type=int, nargs="+", default=[10, 11, 12])
     parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument("--freeze_epochs", type=int, default=FREEZE_EPOCHS)
     parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)

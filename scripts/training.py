@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import random
 import sys
 from pathlib import Path
 
@@ -28,6 +27,7 @@ from utils.constants import (
     RESULTS_DIR,
 )
 from utils.data_utils import load_train_dev_test
+from utils.env_fingerprint import log_env_fingerprint, set_determinism
 from utils.feature_utils import compute_all_features
 from utils.logging_utils import Tee
 from utils.training_pipeline import (
@@ -98,12 +98,9 @@ def main() -> None:
         f"config={args.config} | encoder={encoder_id} | seed={seed}"
     )
     print("=" * 80)
+    log_env_fingerprint()
 
-    random.seed(seed)
-    np.random.seed(0)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    set_determinism(seed)
 
     train_dir = data_dir / "train" / subtask / lang
     test_dir = data_dir / "test" / subtask / lang
@@ -142,11 +139,7 @@ def main() -> None:
     )
 
     if multilingual:
-        random.seed(seed)
-        np.random.seed(0)
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+        set_determinism(seed)
 
     if is_legacy:
         from transformers import RobertaTokenizer
