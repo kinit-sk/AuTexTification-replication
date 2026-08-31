@@ -7,7 +7,7 @@ ablations, SHAP, Optuna tuning, and MULTITuDE mAA experiments.
 Run everything from this directory:
 
 ```bash
-cd autextification-replication-E09F
+cd autextification--replication
 ```
 
 Use file execution for most scripts, for example `python scripts/training.py`.
@@ -328,6 +328,20 @@ Args: `--dataset`, `--variant all|hybrid_multilingual|lingrf_predout_multilingua
 - No shell runners are present in the current `scripts/` directory.
 
 ## Citation
+
+Our replication paper (accepted to Findings of EMNLP 2026):
+
+```bibtex
+@misc{skurla2026interpretablepredictabilitybasedaitext,
+      title={Interpretable Predictability-Based AI Text Detection: A Replication Study}, 
+      author={Adam Skurla and Dominik Macko and Jakub Simko},
+      year={2026},
+      eprint={2603.15034},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2603.15034}, 
+}
+```
 
 Original paper:
 
