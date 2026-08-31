@@ -7,7 +7,7 @@ ablations, SHAP, Optuna tuning, and MULTITuDE mAA experiments.
 Run everything from this directory:
 
 ```bash
-cd autextification--replication
+cd AuTexTification-replication
 ```
 
 Use file execution for most scripts, for example `python scripts/training.py`.
